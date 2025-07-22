@@ -81,10 +81,9 @@ class JekyllOgImage::Generator < Jekyll::Generator
 
     canvas = generate_canvas(site, config)
     canvas = add_border_bottom(canvas, config) if config.border_bottom
-    canvas = add_image(canvas, File.read(File.join(site.config["source"], config.image))) if config.image
+    canvas = add_image(canvas, File.read(File.join(site.config["source"], config.image.path)), config) if config.image.path
     canvas = add_header(canvas, item, config)
-    canvas = add_publish_date(canvas, item, config)
-    canvas = add_tags(canvas, item, config) if item.data["tags"]&.any?
+    canvas = add_metadata(canvas, item, config)
     canvas = add_domain(canvas, item, config) if config.domain
 
     canvas.save(path)
@@ -109,61 +108,89 @@ class JekyllOgImage::Generator < Jekyll::Generator
     )
   end
 
-  def add_image(canvas, image)
-    canvas.image(image,
-      gravity: :ne,
-      width: 150,
-      height: 150,
-      radius: 50
-    ) { |_canvas, _text| { x: 80, y: 100 } }
+  def add_image(canvas, image_data, config)
+    image_config = config.image
+    canvas.image(image_data,
+      gravity: image_config.gravity,
+      width: image_config.width,
+      height: image_config.height,
+      radius: image_config.radius
+    ) { |_canvas, _text| { x: image_config.position[:x], y: image_config.position[:y] } }
   end
 
   def add_header(canvas, item, config)
     title = item.data["title"] || "Untitled"
-    canvas.text(title,
-      width: config.image ? 870 : 1040,
+    full_title = "#{config.header.prefix}#{title}#{config.header.suffix}"
+
+    # Calculate available width for header text to avoid overlap with image
+    header_width = if config.image.path
+      # Canvas width - left margin - right margin - image width - spacing
+      # 1200 - 80 - 80 - image_width - 30 (spacing)
+      1040 - config.image.width - 30
+    else
+      1040
+    end
+
+    canvas.text(full_title,
+      width: header_width,
       color: config.header.color,
       dpi: 400,
       font: config.header.font_family
     ) { |_canvas, _text| { x: 80, y: 100 } }
   end
 
-  def add_publish_date(canvas, item, config)
-    return canvas unless item.respond_to?(:date) && item.date
+  def add_metadata(canvas, item, config)
+    metadata_parts = []
 
-    date = item.date.strftime("%B %d, %Y")
-    y_pos = (item.data["tags"]&.any? ? config.margin_bottom + 50 : config.margin_bottom)
+    config.metadata.fields.each do |field|
+      case field
+      when "date"
+        if item.respond_to?(:date) && item.date
+          metadata_parts << item.date.strftime(config.metadata.date_format)
+        end
+      when "tags"
+        if item.data["tags"]&.is_a?(Array) && item.data["tags"].any?
+          metadata_parts << item.data["tags"].map { |tag| "##{tag}" }.join(" ")
+        end
+      else
+        # Support custom fields from front matter
+        if item.data[field]
+          metadata_parts << item.data[field].to_s
+        end
+      end
+    end
 
-    canvas.text(date,
+    return canvas if metadata_parts.empty?
+
+    metadata_text = metadata_parts.join(config.metadata.separator)
+
+    # Calculate available width based on whether domain is present
+    metadata_width = config.domain ? 600 : 1040
+
+    canvas.text(metadata_text,
       gravity: :sw,
-      color: config.content.color,
-      dpi: 150,
-      font: config.content.font_family
-    ) { |_canvas, _text| { x: 80, y: y_pos } }
-  end
-
-  def add_tags(canvas, item, config)
-    tags_list = item.data["tags"]
-    return canvas unless tags_list.is_a?(Array) && tags_list.any?
-
-    tags = tags_list.map { |tag| "##{tag}" }.join(" ")
-
-    canvas.text(tags,
-      gravity: :sw,
+      width: metadata_width,
       color: config.content.color,
       dpi: 150,
       font: config.content.font_family
     ) { |_canvas, _text| { x: 80, y: config.margin_bottom } }
   end
 
+
   def add_domain(canvas, item, config)
-    y_pos = if item.data["tags"]&.any?
-              config.margin_bottom + 50
-              # rubocop:disable Layout/ElseAlignment # Disabled due to RuboCop error in v3.3.0
-            else
-              # rubocop:enable Layout/ElseAlignment
-              config.margin_bottom
+    # Check if any metadata is being displayed
+    has_metadata = config.metadata.fields.any? do |field|
+      case field
+      when "date"
+        item.respond_to?(:date) && item.date
+      when "tags"
+        item.data["tags"]&.is_a?(Array) && item.data["tags"].any?
+      else
+        item.data[field]
+      end
     end
+
+    y_pos = has_metadata ? config.margin_bottom + 50 : config.margin_bottom
 
     canvas.text(config.domain,
       gravity: :se,
