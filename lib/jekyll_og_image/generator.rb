@@ -49,6 +49,18 @@ class JekyllOgImage::Generator < Jekyll::Generator
         Jekyll.logger.info "Jekyll Og Image:", "Skipping image generation for #{relative_image_path} as it already exists." if config.verbose?
       end
 
+      # Add the generated image to Jekyll's static files collection
+      if File.exist?(absolute_image_path)
+        static_file = Jekyll::StaticFile.new(
+          site,
+          site.source,
+          base_output_dir,
+          image_filename
+        )
+        site.static_files << static_file unless site.static_files.include?(static_file)
+        Jekyll.logger.info "Jekyll Og Image:", "Added #{base_output_dir}/#{image_filename} to static files" if config.verbose?
+      end
+
       item.data["image"] ||= {
         "path" => relative_image_path,
         "width" => JekyllOgImage.config.canvas.width,
